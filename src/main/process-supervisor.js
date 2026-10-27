@@ -82,6 +82,64 @@ class ProcessSupervisor extends EventEmitter {
     this.emit('status', this.getState());
   }
 
+  resolveRuntimeProxy(settings) {
+    if (settings && settings.proxyUrl && settings.proxyUrl.trim()) {
+      return settings.proxyUrl.trim();
+    }
+    if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
+      return (process.env.HTTP_PROXY || process.env.HTTPS_PROXY).trim();
+    }
+    if (process.platform === 'win32') {
+      try {
+        const { execSync } = require('child_process');
+        const enableOut = execSync(
+          'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable',
+          { windowsHide: true, encoding: 'utf8', timeout: 1500 }
+        );
+        if (enableOut.includes('0x1')) {
+          const serverOut = execSync(
+            'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer',
+            { windowsHide: true, encoding: 'utf8', timeout: 1500 }
+          );
+          const match = serverOut.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
+          if (match && match[1]) {
+            let serverStr = match[1].trim();
+            if (serverStr.includes('=')) {
+              const httpPart = serverStr.split(';').find((p) => p.toLowerCase().startsWith('http=') || p.toLowerCase().startsWith('https='));
+              if (httpPart) {
+                serverStr = httpPart.split('=')[1].trim();
+              }
+            }
+            if (!serverStr.startsWith('http://') && !serverStr.startsWith('socks5://')) {
+              serverStr = 'http://' + serverStr;
+            }
+            return serverStr;
+          }
+        }
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  buildChildEnv(settings) {
+    const env = {
+      ...process.env,
+      MANAGEMENT_STATIC_PATH: this.configManager.staticDir
+    };
+
+    const activeProxy = this.resolveRuntimeProxy(settings);
+    if (activeProxy) {
+      env.HTTP_PROXY = activeProxy;
+      env.HTTPS_PROXY = activeProxy;
+      env.http_proxy = activeProxy;
+      env.https_proxy = activeProxy;
+      const defaultNoProxy = '127.0.0.1,localhost,::1,10.*,192.168.*,*.local';
+      env.NO_PROXY = process.env.NO_PROXY ? `${process.env.NO_PROXY},${defaultNoProxy}` : defaultNoProxy;
+      env.no_proxy = env.NO_PROXY;
+    }
+    return { env, activeProxy };
+  }
+
   /**
    * Pre-flight port analysis & start CPA server
    */
@@ -165,16 +223,16 @@ class ProcessSupervisor extends EventEmitter {
 
       this.activePort = finalPort;
 
-      // Step 2: Build CLI arguments & environment
+      // Step 2: Build CLI arguments & environment with proxy auto-detection
       const args = ['--config', this.configManager.configYamlPath];
       if (settings.localModel) {
         args.push('--local-model');
       }
 
-      const env = {
-        ...process.env,
-        MANAGEMENT_STATIC_PATH: this.configManager.staticDir
-      };
+      const { env, activeProxy } = this.buildChildEnv(settings);
+      if (activeProxy) {
+        this.appendLog('INFO', `[网络代理配置] 已接入上游代理: ${activeProxy} (已自动配置环回直连保护)`);
+      }
 
       this.appendLog('INFO', `启动内核: ${path.basename(binaryPath)} ${args.join(' ')}`);
 
@@ -383,8 +441,10 @@ class ProcessSupervisor extends EventEmitter {
 
     this.appendLog('INFO', `正在启动 ${target.name} OAuth 授权流程 (${args.join(' ')})...`);
 
+    const { env } = this.buildChildEnv(this.configManager.loadSettings());
     const child = spawn(binaryPath, args, {
       cwd: this.configManager.dataDir,
+      env,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
     });

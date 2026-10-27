@@ -143,17 +143,50 @@ class ConfigManager {
       let html = fs.readFileSync(sourcePath, 'utf8');
       html = html.replace(/<!-- CPA-AUTOLOGIN-START -->[\s\S]*?<!-- CPA-AUTOLOGIN-END -->\s*/g, '');
 
-      const safeKey = JSON.stringify(String(managementKey || 'cpa-admin-8888'));
+      const keyVal = String(managementKey || 'cpa-admin-8888');
+      const safeKey = JSON.stringify(keyVal);
       const snippet = `<!-- CPA-AUTOLOGIN-START -->
 <script>
 (function(){
   try {
     var origin = window.location.origin;
     if (origin && origin.indexOf('http') === 0) {
+      var currentKey = ${safeKey};
+      var storedAuth = localStorage.getItem('cli-proxy-auth');
+      var needReset = false;
+      if (storedAuth) {
+        try {
+          var parsed = JSON.parse(storedAuth);
+          if (parsed && parsed.state && parsed.state.managementKey !== currentKey) {
+            needReset = true;
+          }
+        } catch (_) {
+          needReset = true;
+        }
+      }
+      var plainKey = localStorage.getItem('managementKey');
+      if (plainKey && plainKey !== currentKey && plainKey !== JSON.stringify(currentKey)) {
+        needReset = true;
+      }
+      if (needReset) {
+        ['cli-proxy-auth', 'isLoggedIn', 'apiBase', 'apiUrl', 'managementKey'].forEach(function(k){
+          try { localStorage.removeItem(k); } catch (_) {}
+        });
+      }
       localStorage.setItem('isLoggedIn', 'true');
       localStorage.setItem('apiBase', origin);
       localStorage.setItem('apiUrl', origin);
-      localStorage.setItem('managementKey', ${safeKey});
+      localStorage.setItem('managementKey', JSON.stringify(currentKey));
+      localStorage.setItem('cli-proxy-auth', JSON.stringify({
+        state: {
+          isAuthenticated: true,
+          apiBase: origin,
+          managementKey: currentKey,
+          rememberPassword: true,
+          connectionStatus: 'connected'
+        },
+        version: 0
+      }));
     }
   } catch (e) {}
 })();
@@ -288,9 +321,26 @@ class ConfigManager {
       settings.requestLog ? 'true' : 'false'
     );
 
+    content = this.replaceYamlNestedField(
+      content,
+      'routing',
+      'cooldown',
+      'save-cooldown-status',
+      'false'
+    );
+    content = this.replaceYamlNestedField(
+      content,
+      'routing',
+      'cooldown',
+      'transient-error-cooldown-seconds',
+      '0'
+    );
+
     if (settings.clientApiKey) {
       content = this.ensureClientApiKeyInYaml(content, settings.clientApiKey);
     }
+
+    content = this.ensureCompatibilityBlocks(content);
 
     fs.writeFileSync(this.configYamlPath, content, 'utf8');
     this.mirrorConfigNextToBinary(content);
@@ -357,7 +407,7 @@ routing:
     max-retry-interval: 30
   cooldown:
     disable-cooling: false
-    save-cooldown-status: true
+    save-cooldown-status: false
     transient-error-cooldown-seconds: 0
 
 requests:
@@ -368,10 +418,27 @@ requests:
 
 oauth:
   auth-dir: "${normalizedAuthDir}"
+  model-alias: {}
+  excluded-models: {}
 
 multimedia:
   disable-image-generation: false
   video-result-auth-cache-ttl: "3h"
+
+client:
+  codex:
+    enable-apply-patch: true
+    optimize-multi-agent-v2: true
+    web-search-result-cache:
+      enabled: true
+      ttl: "24h"
+      limit: 500
+
+upstream:
+  codex:
+    orphan-delegation-compatibility: true
+    model-level-cooling: true
+    stream-bootstrap-buffering: true
 
 observability:
   logs:
@@ -396,6 +463,19 @@ plugins:
     jshandler:
       enabled: true
 `;
+  }
+
+  ensureCompatibilityBlocks(content) {
+    if (!/model-alias:/m.test(content)) {
+      content = content.replace(/(oauth:[\s\S]*?auth-dir:\s*.*$)/m, '$1\n  model-alias: {}\n  excluded-models: {}');
+    }
+    if (!/client:\s*\n\s*codex:/m.test(content)) {
+      content += `\nclient:\n  codex:\n    enable-apply-patch: true\n    optimize-multi-agent-v2: true\n    web-search-result-cache:\n      enabled: true\n      ttl: "24h"\n      limit: 500\n`;
+    }
+    if (!/upstream:\s*\n\s*codex:/m.test(content)) {
+      content += `\nupstream:\n  codex:\n    orphan-delegation-compatibility: true\n    model-level-cooling: true\n    stream-bootstrap-buffering: true\n`;
+    }
+    return content;
   }
 
   replaceYamlBlockField(yamlText, blockName, fieldName, newValueStr) {

@@ -36,6 +36,11 @@ async function runTests() {
   assert.ok(fs.existsSync(cfgMgr.configYamlPath), 'config.yaml should be generated');
   const rawYaml = fs.readFileSync(cfgMgr.configYamlPath, 'utf8');
   assert.ok(/plugins:\s*\n\s*enabled:\s*true/m.test(rawYaml), 'plugins.enabled must be true in config.yaml');
+  assert.ok(/model-alias:\s*\{\}/m.test(rawYaml), 'oauth.model-alias must be present');
+  assert.ok(/excluded-models:\s*\{\}/m.test(rawYaml), 'oauth.excluded-models must be present as a map');
+  assert.ok(/client:\s*\n\s*codex:/m.test(rawYaml), 'client.codex section must be present');
+  assert.ok(/upstream:\s*\n\s*codex:/m.test(rawYaml), 'upstream.codex section must be present');
+  assert.ok(/save-cooldown-status:\s*false/m.test(rawYaml), 'save-cooldown-status must be false');
   assert.ok(fs.existsSync(cfgMgr.managementHtmlPath), 'offline management.html should be copied');
 
   console.log('=== [2/4] Testing PortAnalyzer & Conflict Auto-Switch ===');
@@ -50,6 +55,10 @@ async function runTests() {
 
   console.log(`=== [3/4] Testing ProcessSupervisor Auto-Switch (${basePort} -> ${diag.recommendedMainPort}) & Real CPA Kernel ===`);
   const supervisor = new ProcessSupervisor(cfgMgr);
+  const testEnv = supervisor.buildChildEnv({ proxyUrl: 'http://127.0.0.1:9999' });
+  assert.strictEqual(testEnv.env.HTTP_PROXY, 'http://127.0.0.1:9999');
+  assert.ok(testEnv.env.NO_PROXY.includes('127.0.0.1'), 'NO_PROXY must include 127.0.0.1 loopback protection');
+
   const state = await supervisor.start({
     port: basePort,
     autoSwitchPort: true,
@@ -77,6 +86,16 @@ async function runTests() {
   assert.strictEqual(pluginsRes.statusCode, 200, '/v0/management/plugins should return 200');
   const pluginsData = JSON.parse(pluginsRes.body);
   assert.strictEqual(pluginsData.plugins_enabled, true, 'Management API must report plugins_enabled: true');
+
+  const modelAliasRes = await httpGet(`http://127.0.0.1:${state.activePort}/v8/management/config/oauth/model-alias`, {
+    Authorization: `Bearer ${settings.managementKey}`
+  });
+  assert.strictEqual(modelAliasRes.statusCode, 200, '/v8/management/config/oauth/model-alias must return 200');
+
+  const excludedModelsRes = await httpGet(`http://127.0.0.1:${state.activePort}/v8/management/config/oauth/excluded-models`, {
+    Authorization: `Bearer ${settings.managementKey}`
+  });
+  assert.strictEqual(excludedModelsRes.statusCode, 200, '/v8/management/config/oauth/excluded-models must return 200');
 
   await supervisor.stop(true);
   await new Promise((r) => blocker.close(r));
