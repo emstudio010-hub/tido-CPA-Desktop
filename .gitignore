@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+*.log
+.DS_Store
+resources/bin/cli-proxy-api
+resources/bin/cli-proxy-api.exe

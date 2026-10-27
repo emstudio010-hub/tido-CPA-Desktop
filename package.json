@@ -1,0 +1,65 @@
+{
+  "name": "tido-cpa-desktop",
+  "productName": "tido-CPA Desktop",
+  "version": "1.0.0",
+  "description": "桌面端的 CPA (CLIProxyAPI) 守护与管理中心，脱离 Docker 一键运行",
+  "main": "src/main/main.js",
+  "author": "tido-CPA Desktop",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/verify-all.js",
+    "pack:win": "electron-builder --win --x64 --dir",
+    "dist:win": "electron-builder --win zip --x64"
+  },
+  "build": {
+    "appId": "com.cliproxyapi.desktop.daemon",
+    "productName": "CPA-Desktop",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "cli-proxy-api.exe"
+        ]
+      },
+      {
+        "from": "resources/static",
+        "to": "static",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/plugins",
+        "to": "plugins",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

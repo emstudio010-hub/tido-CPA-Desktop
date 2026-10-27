@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CLIProxyAPI Desktop - 守护与端口管理中心</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header Navigation -->
+    <header class="topbar">
+      <div class="brand-area">
+        <div class="brand-logo">CPA</div>
+        <div class="brand-text">
+          <div class="brand-title">
+            tido-CPA Desktop
+            <span class="version-badge">v8.0.44 · 免 Docker 一键运行版</span>
+          </div>
+          <div class="brand-subtitle">Windows 独立进程守护 · 端口自分析切换 · 内嵌 WebUI 管理台</div>
+        </div>
+      </div>
+
+      <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="daemon">
+          <span class="tab-icon">⚡</span>
+          <span>守护与端口控制台</span>
+        </button>
+        <button class="nav-tab" data-tab="webui">
+          <span class="tab-icon">🎛️</span>
+          <span>CPA 业务管理中心 (WebUI)</span>
+          <span id="webui-tab-port" class="tab-pill">:8317</span>
+        </button>
+        <button class="nav-tab" data-tab="yaml">
+          <span class="tab-icon">📄</span>
+          <span>YAML 源码与凭据池</span>
+          <span id="cred-count-badge" class="tab-pill">0</span>
+        </button>
+      </nav>
+
+      <div class="header-actions">
+        <div id="header-status-pill" class="status-pill status-stopped">
+          <span class="status-dot"></span>
+          <span id="header-status-text">待命 (未启动)</span>
+        </div>
+        <button id="btn-primary-toggle" class="btn btn-success btn-lg">
+          ▶ 启动 CPA 服务
+        </button>
+        <button id="btn-restart-server" class="btn btn-secondary" title="重启 CPA 服务" style="display: none;">
+          🔄 重启
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Viewport -->
+    <main class="main-viewport">
+      <!-- TAB 1: DAEMON & PORT CONSOLE -->
+      <section id="tab-daemon" class="tab-panel active">
+        <!-- Port Auto-Switch Alert Banner -->
+        <div id="port-switch-banner" class="alert-banner alert-warn" style="display: none;">
+          <div class="alert-content">
+            <strong>⚡ 端口冲突已自动切换：</strong>
+            <span id="port-switch-text"></span>
+          </div>
+          <button id="btn-dismiss-switch" class="btn-icon">✕</button>
+        </div>
+
+        <!-- Error Alert Banner -->
+        <div id="error-banner" class="alert-banner alert-error" style="display: none;">
+          <div class="alert-content">
+            <strong>⚠️ 服务异常提示：</strong>
+            <span id="error-banner-text"></span>
+          </div>
+        </div>
+
+        <!-- Quick Endpoints & Status Strip -->
+        <div class="overview-strip">
+          <div class="metric-card">
+            <div class="metric-label">当前服务状态</div>
+            <div class="metric-value" id="metric-status">⚪ 待命选端口</div>
+            <div class="metric-sub" id="metric-pid">确认下方端口后点击启动</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">API 代理端点 (OpenAI / Claude / Gemini 兼容)</div>
+            <div class="metric-copy-row">
+              <code id="metric-api-url">http://127.0.0.1:8317/v1</code>
+              <button class="btn btn-xs btn-ghost" data-copy-target="metric-api-url">复制</button>
+            </div>
+            <div class="metric-sub">支持 /v1/chat/completions, /v1/messages, /v1/responses</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">客户端 API Key (下游工具填写)</div>
+            <div class="metric-copy-row">
+              <code id="metric-client-key">sk-cpa-local-8888</code>
+              <button class="btn btn-xs btn-ghost" data-copy-target="metric-client-key">复制</button>
+            </div>
+            <div class="metric-sub">对应 config.yaml 中 access.api-keys</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-label">WebUI 管理密钥 (登录管理台)</div>
+            <div class="metric-copy-row">
+              <code id="metric-mgmt-key">cpa-admin-8888</code>
+              <button class="btn btn-xs btn-ghost" data-copy-target="metric-mgmt-key">复制</button>
+            </div>
+            <div class="metric-sub">对应 management.secret-key</div>
+          </div>
+        </div>
+
+        <!-- Main Two-Column Grid -->
+        <div class="dashboard-grid">
+          <!-- Left Column: Port Analyzer & Auto-Switch -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">🎯 端口自分析与冲突切换中心</h2>
+                <p class="card-desc">启动前检测主端口与 OAuth 回调端口占用情况，支持被占用时自动顺延切换到空闲端口</p>
+              </div>
+              <div class="card-actions">
+                <button id="btn-scan-ports" class="btn btn-sm btn-secondary">🔍 重新扫描</button>
+                <button id="btn-auto-pick-port" class="btn btn-sm btn-accent">✨ 自动优选空闲端口</button>
+              </div>
+            </div>
+
+            <div class="port-config-bar">
+              <div class="form-group-inline">
+                <label for="input-main-port">CPA 主服务端口</label>
+                <input type="number" id="input-main-port" min="1024" max="65535" value="8317" class="input-port" />
+              </div>
+
+              <div class="form-group-inline">
+                <label for="select-bind-host">监听范围</label>
+                <select id="select-bind-host" class="input-select">
+                  <option value="0.0.0.0">0.0.0.0 (本机 + 局域网可用)</option>
+                  <option value="127.0.0.1">127.0.0.1 (仅限本机访问)</option>
+                </select>
+              </div>
+
+              <button id="btn-apply-port" class="btn btn-primary btn-sm">💾 保存端口设置</button>
+            </div>
+
+            <div class="switch-row highlight-switch">
+              <label class="toggle-label">
+                <input type="checkbox" id="chk-auto-switch-port" checked />
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">
+                  <strong>启用端口冲突自动分析切换 (Auto-Switch Port)</strong>
+                  <small>当设定的主端口被其他程序占用时，启动服务会自动顺延寻找并切换到下一个可用端口</small>
+                </span>
+              </label>
+            </div>
+
+            <!-- Port Radar Table -->
+            <div class="port-table-wrap">
+              <table class="port-table">
+                <thead>
+                  <tr>
+                    <th>端口</th>
+                    <th>服务角色 / 协议</th>
+                    <th>当前占用诊断</th>
+                    <th style="text-align: right;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="port-radar-tbody">
+                  <tr>
+                    <td colspan="4" class="empty-cell">正在扫描本机端口状态...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Right Column: System Daemon & Core Settings -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">⚙️ 系统自启、守护与核心参数</h2>
+                <p class="card-desc">脱离 Docker 原生运行，配置开机自启、托盘守护、密钥与全局上游代理</p>
+              </div>
+              <button id="btn-save-settings" class="btn btn-sm btn-primary">💾 保存全部设置</button>
+            </div>
+
+            <!-- System Toggles Grid -->
+            <div class="toggles-grid">
+              <label class="toggle-box">
+                <input type="checkbox" id="chk-autostart-os" checked />
+                <div class="toggle-box-body">
+                  <div class="toggle-box-title">🚀 Windows 开机自启</div>
+                  <div class="toggle-box-desc">登录系统时自动启动本程序</div>
+                </div>
+              </label>
+
+              <label class="toggle-box">
+                <input type="checkbox" id="chk-autostart-server" checked />
+                <div class="toggle-box-body">
+                  <div class="toggle-box-title">⚡ 打开软件自动启动服务</div>
+                  <div class="toggle-box-desc">启动软件后自动自检端口并运行 CPA</div>
+                </div>
+              </label>
+
+              <label class="toggle-box">
+                <input type="checkbox" id="chk-minimize-tray" checked />
+                <div class="toggle-box-body">
+                  <div class="toggle-box-title">📥 关闭窗口最小化到托盘</div>
+                  <div class="toggle-box-desc">后台静默保持反代服务不中断</div>
+                </div>
+              </label>
+
+              <label class="toggle-box">
+                <input type="checkbox" id="chk-crash-guard" checked />
+                <div class="toggle-box-body">
+                  <div class="toggle-box-title">🛡️ 进程崩溃自动重启守护</div>
+                  <div class="toggle-box-desc">核心意外退出时自动自愈拉起</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Core Config Inputs -->
+            <div class="form-stack">
+              <div class="form-row-2">
+                <div class="form-field">
+                  <label for="input-mgmt-key">WebUI 管理密钥 (management.secret-key)</label>
+                  <input type="text" id="input-mgmt-key" placeholder="如 cpa-admin-8888" />
+                </div>
+                <div class="form-field">
+                  <label for="input-client-key">客户端调用密钥 (access.api-keys)</label>
+                  <input type="text" id="input-client-key" placeholder="如 sk-cpa-local-8888" />
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="input-proxy-url">全局上游代理 (requests.proxy-url，留空则直连)</label>
+                <input type="text" id="input-proxy-url" placeholder="支持 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" />
+              </div>
+
+              <div class="inline-checkboxes">
+                <label class="inline-chk">
+                  <input type="checkbox" id="chk-plugins-enabled" checked />
+                  <span>启用插件系统权限 (plugins.enabled)</span>
+                </label>
+                <label class="inline-chk">
+                  <input type="checkbox" id="chk-allow-remote" checked />
+                  <span>允许局域网访问管理端</span>
+                </label>
+                <label class="inline-chk">
+                  <input type="checkbox" id="chk-local-model" />
+                  <span>使用离线内置模型目录 (--local-model)</span>
+                </label>
+                <label class="inline-chk">
+                  <input type="checkbox" id="chk-debug-log" />
+                  <span>开启 Debug 详细日志</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Quick OAuth Trigger Section -->
+            <div class="oauth-quick-section">
+              <div class="oauth-header">
+                <span class="oauth-title">🔐 快捷 CLI OAuth 网页授权 (自带回调端口冲突自动避障)</span>
+              </div>
+              <div class="oauth-buttons">
+                <button class="btn btn-xs btn-oauth" data-oauth="codex">OpenAI Codex</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="codex-device">Codex 设备码</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="claude">Claude Code</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="antigravity">Google Antigravity</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="kimi">Kimi Code</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="xai">xAI Grok</button>
+                <button class="btn btn-xs btn-oauth" data-oauth="devin">Devin</button>
+              </div>
+              <div id="oauth-active-box" class="oauth-url-box" style="display: none;">
+                <div class="oauth-url-title" id="oauth-box-title">正在等待浏览器完成授权...</div>
+                <div class="oauth-url-row">
+                  <input type="text" id="oauth-url-input" readonly />
+                  <button id="btn-open-oauth-url" class="btn btn-xs btn-primary">🌐 打开授权页</button>
+                  <button id="btn-copy-oauth-url" class="btn btn-xs btn-secondary">复制链接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Terminal Log Panel -->
+        <div class="card terminal-card">
+          <div class="card-header terminal-header">
+            <div class="terminal-title-group">
+              <span class="terminal-dot red"></span>
+              <span class="terminal-dot yellow"></span>
+              <span class="terminal-dot green"></span>
+              <h3 class="card-title" style="margin-left: 8px;">🖥️ 内核与守护进程实时日志</h3>
+            </div>
+            <div class="terminal-actions">
+              <button class="btn btn-xs btn-ghost" data-folder="data">📂 打开 data 目录</button>
+              <button class="btn btn-xs btn-ghost" data-folder="plugins">🧩 打开 plugins 插件夹</button>
+              <button class="btn btn-xs btn-ghost" data-folder="auths">🔑 打开 auths 凭据夹</button>
+              <button class="btn btn-xs btn-ghost" data-folder="logs">📋 打开日志文件夹</button>
+              <button id="btn-clear-logs" class="btn btn-xs btn-secondary">🧹 清空日志</button>
+            </div>
+          </div>
+          <div id="log-container" class="terminal-body"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: EMBEDDED CPA WEBUI MANAGEMENT CENTER -->
+      <section id="tab-webui" class="tab-panel">
+        <div class="webui-toolbar">
+          <div class="webui-toolbar-left">
+            <span class="webui-badge">内置 CPAMC v1.26.7</span>
+            <span id="webui-current-url" class="webui-url-text">http://127.0.0.1:8317/management.html</span>
+          </div>
+          <div class="webui-toolbar-right">
+            <span class="webui-key-hint">
+              管理密钥: <code id="webui-toolbar-key">cpa-admin-8888</code>
+            </span>
+            <button id="btn-copy-webui-key" class="btn btn-xs btn-secondary">📋 复制管理密钥</button>
+            <button id="btn-reload-webui" class="btn btn-xs btn-secondary">🔄 刷新面板</button>
+            <button id="btn-external-webui" class="btn btn-xs btn-primary">🌐 在浏览器中打开</button>
+          </div>
+        </div>
+
+        <div id="webui-placeholder" class="webui-empty-state">
+          <div class="empty-icon">🚀</div>
+          <h3>CPA 核心服务尚未启动</h3>
+          <p>请先在【守护与端口控制台】确认端口配置，或直接点击下方按钮启动服务后即可使用完整 WebUI 管理中心。</p>
+          <button id="btn-start-from-webui" class="btn btn-success btn-lg">▶ 立即启动 CPA 服务并加载 WebUI</button>
+        </div>
+
+        <iframe id="webui-iframe" class="webui-frame" allow="clipboard-read; clipboard-write; fullscreen; downloads" style="display: none;"></iframe>
+      </section>
+
+      <!-- TAB 3: RAW YAML & AUTH CREDENTIALS POOL -->
+      <section id="tab-yaml" class="tab-panel">
+        <div class="dashboard-grid">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">📝 config.yaml 源码编辑器 (v8)</h2>
+                <p class="card-desc" id="yaml-file-path">data/config.yaml</p>
+              </div>
+              <div class="card-actions">
+                <button id="btn-reload-yaml" class="btn btn-sm btn-secondary">🔄 重新读取</button>
+                <button id="btn-save-yaml" class="btn btn-sm btn-primary">💾 保存 YAML (支持热重载)</button>
+              </div>
+            </div>
+            <textarea id="textarea-raw-yaml" class="yaml-editor" spellcheck="false"></textarea>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">🔑 本地 OAuth 账号凭据池 (data/auths)</h2>
+                <p class="card-desc">展示当前已登录保存的各平台 OAuth JSON 认证文件</p>
+              </div>
+              <button class="btn btn-sm btn-secondary" data-folder="auths">📂 打开凭据目录</button>
+            </div>
+            <div id="credentials-list" class="credentials-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
