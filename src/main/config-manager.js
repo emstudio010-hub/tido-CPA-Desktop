@@ -169,11 +169,124 @@ class ConfigManager {
       const safeKey = JSON.stringify(keyVal);
       const snippet = `<!-- CPA-AUTOLOGIN-START -->
 <script>
+window.__CPA_KEY__ = ${safeKey};
 (function(){
   try {
+    var currentKey = ${safeKey};
     var origin = window.location.origin;
+
+    // 1. Global XHR & Fetch Interceptor to rewrite relative management routes and guarantee Auth header
+    var mgmtRoutes = [
+      '/observability',
+      '/config',
+      '/credentials',
+      '/routing',
+      '/plugin',
+      '/plugins',
+      '/quota',
+      '/usage',
+      '/oauth',
+      '/models',
+      '/auth',
+      '/logs'
+    ];
+
+    function shouldRewrite(pathname) {
+      if (!pathname) return false;
+      if (pathname.startsWith('/v8/management') || pathname.startsWith('/v0/management')) {
+        return false;
+      }
+      for (var i = 0; i < mgmtRoutes.length; i++) {
+        var r = mgmtRoutes[i];
+        if (pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?') || pathname.startsWith(r + '.')) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function rewriteUrl(url) {
+      if (typeof url !== 'string') return url;
+      try {
+        var curOrigin = window.location.origin;
+        var parsed = new URL(url, curOrigin);
+        if (parsed.origin === curOrigin || parsed.host === window.location.host) {
+          if (shouldRewrite(parsed.pathname)) {
+            parsed.pathname = '/v8/management' + parsed.pathname;
+            return parsed.toString();
+          }
+        }
+      } catch (_) {}
+      return url;
+    }
+
+    if (typeof XMLHttpRequest !== 'undefined') {
+      var origOpen = XMLHttpRequest.prototype.open;
+      var origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+      var origSend = XMLHttpRequest.prototype.send;
+
+      XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
+        var fixedUrl = rewriteUrl(url);
+        this._cpaUrl = fixedUrl;
+        this._cpaHasAuth = false;
+        if (arguments.length > 2) {
+          return origOpen.call(this, method, fixedUrl, async, user, pass);
+        }
+        return origOpen.call(this, method, fixedUrl);
+      };
+
+      XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+        if (header && header.toLowerCase() === 'authorization') {
+          this._cpaHasAuth = true;
+        }
+        return origSetRequestHeader.apply(this, arguments);
+      };
+
+      XMLHttpRequest.prototype.send = function(body) {
+        try {
+          if (!this._cpaHasAuth && this._cpaUrl && this._cpaUrl.indexOf('/v8/management') !== -1) {
+            this.setRequestHeader('Authorization', 'Bearer ' + currentKey);
+          }
+        } catch (_) {}
+        return origSend.apply(this, arguments);
+      };
+    }
+
+    if (typeof window.fetch === 'function') {
+      var origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        try {
+          var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+          var fixedUrl = rewriteUrl(url);
+          init = init || {};
+          var headers = new Headers(init.headers || (typeof input === 'object' && input.headers ? input.headers : {}));
+          if (!headers.has('Authorization') && fixedUrl.indexOf('/v8/management') !== -1) {
+            headers.set('Authorization', 'Bearer ' + currentKey);
+          }
+          init.headers = headers;
+          if (typeof input === 'string') {
+            return origFetch.call(this, fixedUrl, init);
+          } else if (input && input.url) {
+            return origFetch.call(this, new Request(fixedUrl, init));
+          }
+        } catch (_) {}
+        return origFetch.apply(this, arguments);
+      };
+    }
+
+    // 2. Prevent destructive unauthorized logout events from resetting UI state
+    var origAddEventListener = window.addEventListener;
+    window.addEventListener = function(type, listener, options) {
+      if (type === 'unauthorized') {
+        return origAddEventListener.call(this, type, function(e) {
+          console.warn('[CPA] Intercepted unauthorized event, suppressed destructive logout');
+        }, options);
+      }
+      return origAddEventListener.apply(this, arguments);
+    };
+
+    // 3. Auto-seed localStorage with authenticated session credentials
     if (origin && origin.indexOf('http') === 0) {
-      var currentKey = ${safeKey};
       var storedAuth = localStorage.getItem('cli-proxy-auth');
       var needReset = false;
       if (storedAuth) {
@@ -210,7 +323,9 @@ class ConfigManager {
         version: 0
       }));
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[CPA] Auto-login script error:', e);
+  }
 })();
 </script>
 <!-- CPA-AUTOLOGIN-END -->`;

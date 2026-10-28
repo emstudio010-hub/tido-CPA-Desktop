@@ -32,7 +32,7 @@ Name: "autostart"; Description: "开机自动启动 {#MyAppName} (后台守护)"
 
 [Files]
 Source: "dist\win-unpacked\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\win-unpacked\*"; DestDir: "{app}"; Excludes: "installer.iss,*.bat,*.log,*.pid"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\win-unpacked\*"; DestDir: "{app}"; Excludes: "installer.iss,*.bat,*.log,*.pid,data\auths\*.json,data\logs\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
