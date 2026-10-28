@@ -417,6 +417,61 @@ if (!gotTheLock) {
         callback(true);
       });
       session.defaultSession.setPermissionCheckHandler(() => true);
+      // Clear HTTP cache on startup to avoid stale WebUI bundles
+      session.defaultSession.clearCache().catch(() => {});
+    } catch (_) {}
+
+    // Global session-level network interceptor to ensure management requests route properly and carry auth
+    try {
+      const mgmtRoutes = [
+        '/observability',
+        '/config',
+        '/credentials',
+        '/routing',
+        '/plugin',
+        '/plugins',
+        '/quota',
+        '/usage',
+        '/oauth',
+        '/models',
+        '/auth',
+        '/logs'
+      ];
+
+      session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+        try {
+          const urlObj = new URL(details.url);
+          const pathname = urlObj.pathname;
+          const isMgmtRoute = mgmtRoutes.some(
+            (r) => pathname === r || pathname.startsWith(r + '/') || pathname.startsWith(r + '?') || pathname.startsWith(r + '.')
+          );
+
+          if (isMgmtRoute && !pathname.startsWith('/v8/management') && !pathname.startsWith('/v0/management')) {
+            const state = supervisor.getState();
+            const activePort = state.activePort || 8317;
+            if (urlObj.port === String(activePort) || (!urlObj.port && (activePort === 80 || activePort === 443))) {
+              urlObj.pathname = '/v8/management' + pathname;
+              return callback({ redirectURL: urlObj.toString() });
+            }
+          }
+        } catch (_) {}
+        callback({});
+      });
+
+      session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        const requestHeaders = details.requestHeaders || {};
+        try {
+          if (details.url.includes('/v8/management')) {
+            const hasAuth = Object.keys(requestHeaders).some((k) => k.toLowerCase() === 'authorization');
+            if (!hasAuth) {
+              const settings = configManager.loadSettings();
+              const key = settings.managementKey || 'cpa-admin-8888';
+              requestHeaders['Authorization'] = `Bearer ${key}`;
+            }
+          }
+        } catch (_) {}
+        callback({ requestHeaders });
+      });
     } catch (_) {}
 
     configManager.ensureDirectories();

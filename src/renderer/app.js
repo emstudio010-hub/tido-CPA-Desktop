@@ -144,7 +144,8 @@
       iframe.style.display = 'block';
       if (lastLoadedWebUiUrl !== state.webUiUrl) {
         lastLoadedWebUiUrl = state.webUiUrl;
-        iframe.src = state.webUiUrl;
+        const targetUrl = state.webUiUrl ? `${state.webUiUrl}?_t=${Date.now()}` : '';
+        iframe.src = targetUrl;
       }
     } else {
       placeholder.style.display = 'flex';
@@ -395,7 +396,11 @@
 
     $('btn-reload-webui').addEventListener('click', () => {
       const iframe = $('webui-iframe');
-      if (iframe && iframe.src) iframe.src = iframe.src;
+      if (iframe) {
+        const baseUrl = currentState?.webUiUrl || `http://127.0.0.1:${currentState?.activePort || 8317}/management.html`;
+        iframe.src = `${baseUrl}?_t=${Date.now()}`;
+        showToast('已重新加载 WebUI 管理面板');
+      }
     });
 
     $('btn-external-webui').addEventListener('click', () => {

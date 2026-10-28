@@ -225,14 +225,13 @@ window.__CPA_KEY__ = ${safeKey};
       var origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
       var origSend = XMLHttpRequest.prototype.send;
 
-      XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
+      XMLHttpRequest.prototype.open = function(method, url) {
         var fixedUrl = rewriteUrl(url);
         this._cpaUrl = fixedUrl;
         this._cpaHasAuth = false;
-        if (arguments.length > 2) {
-          return origOpen.call(this, method, fixedUrl, async, user, pass);
-        }
-        return origOpen.call(this, method, fixedUrl);
+        var args = Array.prototype.slice.call(arguments);
+        args[1] = fixedUrl;
+        return origOpen.apply(this, args);
       };
 
       XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
