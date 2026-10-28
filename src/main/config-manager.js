@@ -29,6 +29,7 @@ class ConfigManager {
     this.authsDir = path.join(this.dataDir, 'auths');
     this.logsDir = path.join(this.dataDir, 'logs');
     this.pluginsDir = path.join(this.dataDir, 'plugins');
+    this.scriptsDir = path.join(this.dataDir, 'scripts');
     this.staticDir = path.join(this.dataDir, 'static');
     this.localBinDir = path.join(this.baseDir, 'bin');
 
@@ -36,6 +37,7 @@ class ConfigManager {
     this.daemonSettingsPath = path.join(this.dataDir, 'daemon-settings.json');
     this.managementHtmlPath = path.join(this.staticDir, 'management.html');
     this.pidFilePath = path.join(this.dataDir, 'cpa-core.pid');
+    this.codexSanitizerPath = path.join(this.scriptsDir, 'codex-sanitizer.js');
   }
 
   resolvePortableBaseDir() {
@@ -101,6 +103,7 @@ class ConfigManager {
       this.authsDir,
       this.logsDir,
       this.pluginsDir,
+      this.scriptsDir,
       path.join(this.pluginsDir, 'windows', 'amd64'),
       path.join(this.pluginsDir, 'linux', 'amd64'),
       this.staticDir
@@ -114,6 +117,25 @@ class ConfigManager {
     const bundledHtml = path.join(this.resourcesDir, 'static', 'management.html');
     if (fs.existsSync(bundledHtml) && !fs.existsSync(this.managementHtmlPath)) {
       fs.copyFileSync(bundledHtml, this.managementHtmlPath);
+    }
+
+    // Deploy or ensure Codex prompt sanitizer script in data/scripts/codex-sanitizer.js
+    const bundledSanitizer = path.join(this.resourcesDir, 'scripts', 'codex-sanitizer.js');
+    if (fs.existsSync(bundledSanitizer) && !fs.existsSync(this.codexSanitizerPath)) {
+      try {
+        fs.copyFileSync(bundledSanitizer, this.codexSanitizerPath);
+      } catch (_) {}
+    } else if (!fs.existsSync(this.codexSanitizerPath)) {
+      try {
+        fs.writeFileSync(
+          this.codexSanitizerPath,
+          `// CPA Desktop Codex Prompt Sanitizer\n` +
+          `function sanitizeBody(b){if(!b||typeof b!=='string')return b;if(b.indexOf('an agent based on GPT-')!==-1){return b.replace(/an agent based on GPT-[a-zA-Z0-9.-]+/g,'an advanced coding agent');}return b;}\n` +
+          `function on_before_request(c){if(c&&c.body){c.body=sanitizeBody(c.body);}return c;}\n` +
+          `function on_after_auth_request(c){if(c&&c.body){c.body=sanitizeBody(c.body);}return c;}\n`,
+          'utf8'
+        );
+      } catch (_) {}
     }
 
     // Copy any bundled official plugins into data/plugins/windows/amd64
@@ -358,6 +380,7 @@ class ConfigManager {
   buildDefaultConfigYaml(settings, normalizedAuthDir = './auths', normalizedPluginsDir = 'plugins') {
     const bindHost = settings.host === '127.0.0.1' ? '127.0.0.1' : '';
     const pluginsEnabledStr = settings.pluginsEnabled !== false ? 'true' : 'false';
+    const escapedSanitizer = this.codexSanitizerPath.replace(/\\/g, '\\\\');
     return `# CLIProxyAPI v8 Configuration (Managed by CPA Desktop Daemon)
 config-version: 8
 
@@ -462,6 +485,8 @@ plugins:
       enabled: true
     jshandler:
       enabled: true
+      script_paths:
+        - "${escapedSanitizer}"
 `;
   }
 
@@ -474,6 +499,13 @@ plugins:
     }
     if (!/upstream:\s*\n\s*codex:/m.test(content)) {
       content += `\nupstream:\n  codex:\n    orphan-delegation-compatibility: true\n    model-level-cooling: true\n    stream-bootstrap-buffering: true\n`;
+    }
+    const escapedSanitizer = this.codexSanitizerPath.replace(/\\/g, '\\\\');
+    if (!/script_paths:/m.test(content) && /jshandler:\s*\n\s*enabled:\s*true/m.test(content)) {
+      content = content.replace(
+        /(jshandler:\s*\n\s*enabled:\s*true)/m,
+        `$1\n      script_paths:\n        - "${escapedSanitizer}"`
+      );
     }
     return content;
   }
@@ -562,8 +594,8 @@ plugins:
         continue;
       }
       if (inAccess && inApiKeys) {
-        if (/^\s{4}-\s*/.test(line)) {
-          const val = line.replace(/^\s{4}-\s*/, '').replace(/^["']|["']$/g, '').trim();
+        if (/^\s*-\s*/.test(line)) {
+          const val = line.replace(/^\s*-\s*/, '').replace(/^["']|["']$/g, '').trim();
           existingKeys.push({ index: i, value: val });
         } else if (/^\s*\S/.test(line) && !/^\s*#/.test(line)) {
           inApiKeys = false;
@@ -576,6 +608,11 @@ plugins:
         lines.splice(apiKeysLineIdx + 1, 0, `    - "${apiKey}"`);
       } else {
         lines[existingKeys[0].index] = `    - "${apiKey}"`;
+        for (let j = existingKeys.length - 1; j >= 1; j--) {
+          if (existingKeys[j].value === apiKey) {
+            lines.splice(existingKeys[j].index, 1);
+          }
+        }
       }
     }
     return lines.join('\n');
